@@ -3,12 +3,29 @@ const express = require("express");
 const Stripe = require("stripe");
 const axios = require("axios");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const { createClient } = require("@supabase/supabase-js");
+const {
+  authenticateUser,
+  retrieveLicense,
+  createAccount,
+} = require("./keygen");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Initialize Stripe
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Initialize Supabase client for server-side operations
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// JWT secret for signing tokens
+const JWT_SECRET =
+  process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
 // Middleware
 const allowedOrigins = [
@@ -35,6 +52,9 @@ app.options("/create-checkout-session", cors());
 app.options("/create-customer-portal-session", cors());
 app.options("/stripe-webhooks", cors());
 app.options("/keygen-webhooks", cors());
+app.options("/auth/signup", cors());
+app.options("/auth/signin", cors());
+app.options("/auth/signout", cors());
 
 // Stripe Webhook Handler (must be before express.json() middleware)
 app.post(
@@ -239,8 +259,185 @@ app.post(
 // Add JSON parsing middleware for non-webhook routes
 app.use(express.json());
 
+// Authentication middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
+  console.log("token", token);
+  if (!token) {
+    return res.status(401).json({ error: "Access token required" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    console.log("err", err);
+    console.log("user", user);
+    if (err) {
+      return res.status(403).json({ error: "Invalid or expired token" });
+    }
+    req.user = user;
+    console.log("user", user);
+    next();
+  });
+};
+
+// Authentication endpoints
+app.post("/auth/signup", async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  if (password.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "Password must be at least 6 characters" });
+  }
+
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Create a user in Keygen
+    const keygenUser = await createAccount(email, password, data.user.id);
+    console.log("keygen user", keygenUser);
+
+    res.json({
+      message:
+        "User created successfully. Please check your email for confirmation.",
+      user: data.user,
+      keygenUser,
+      keygenErrors: errors,
+    });
+  } catch (error) {
+    console.error("Signup error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/auth/signin", async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  try {
+    // First authenticate with Supabase
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      return res.status(401).json({ error: error.message });
+    }
+
+    // If Supabase authentication succeeds, try Keygen authentication
+    let keygenToken = null;
+    let keygenUserId = data.user.user_metadata?.keygen_user_id;
+
+    if (keygenUserId) {
+      try {
+        // Use the user's email and password to authenticate with Keygen
+        keygenToken = await authenticateUser(email, password);
+        const license = await retrieveLicense(keygenToken);
+        console.log("keygen license", license);
+        console.log("Keygen authentication successful for user:", email);
+      } catch (keygenError) {
+        console.error("Keygen authentication failed:", keygenError);
+        // Don't fail the entire signin if Keygen auth fails
+        // The user can still access the app with Supabase authentication
+      }
+    }
+
+    // Create JWT token
+    const token = jwt.sign(
+      {
+        userId: data.user.id,
+        email: data.user.email,
+        keygenUserId: keygenUserId,
+        keygenToken: keygenToken,
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    res.json({
+      user: data.user,
+      session: data.session,
+      token,
+      keygenToken,
+    });
+  } catch (error) {
+    console.error("Signin error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/auth/signout", authenticateToken, async (req, res) => {
+  try {
+    // Note: Server-side signout doesn't invalidate the JWT token
+    // In a production app, you might want to maintain a blacklist of tokens
+    res.json({ message: "Signed out successfully" });
+  } catch (error) {
+    console.error("Signout error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/auth/verify", authenticateToken, async (req, res) => {
+  try {
+    // Get fresh user data from Supabase
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser(req.user.userId);
+
+    if (error || !user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    res.json({
+      user,
+      keygenUserId: user.user_metadata?.keygen_user_id,
+    });
+  } catch (error) {
+    console.error("Verify error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/auth/user", authenticateToken, async (req, res) => {
+  try {
+    // Get fresh user data from Supabase
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser(req.user.userId);
+
+    if (error || !user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    res.json({
+      user,
+      keygenUserId: user.user_metadata?.keygen_user_id,
+    });
+  } catch (error) {
+    console.error("Get user error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Stripe Checkout Session Endpoint
-app.post("/create-checkout-session", async (req, res) => {
+app.post("/create-checkout-session", authenticateToken, async (req, res) => {
   const { priceId, customerEmail, stripeCustomerId } = req.body;
 
   // Require stripeCustomerId to prevent creating new customers
@@ -300,7 +497,7 @@ app.post("/create-checkout-session", async (req, res) => {
 });
 
 // Helper endpoint to get user's Keygen ID from Supabase user metadata
-app.post("/get-user-keygen-id", async (req, res) => {
+app.post("/get-user-keygen-id", authenticateToken, async (req, res) => {
   const { supabaseUserId } = req.body;
 
   if (!supabaseUserId) {
@@ -345,7 +542,7 @@ app.post("/get-user-keygen-id", async (req, res) => {
 
 // Basic Keygen API proxy (optional, for fetching license info later)
 // You'd likely want more robust handling and auth for this in production
-app.get("/api/v1/licenses/:userId", async (req, res) => {
+app.get("/api/v1/licenses/:userId", authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const response = await axios.get(
@@ -524,108 +721,114 @@ app.post("/keygen-webhooks", async (req, res) => {
 });
 
 // Stripe Customer Portal Session Endpoint
-app.post("/create-customer-portal-session", async (req, res) => {
-  const { stripeCustomerId } = req.body;
+app.post(
+  "/create-customer-portal-session",
+  authenticateToken,
+  async (req, res) => {
+    const { stripeCustomerId } = req.body;
 
-  try {
-    const session = await stripe.billingPortal.sessions.create({
-      customer: stripeCustomerId,
-      return_url: `${process.env.FRONTEND_URL}/dashboard`,
-    });
+    try {
+      const session = await stripe.billingPortal.sessions.create({
+        customer: stripeCustomerId,
+        return_url: `${process.env.FRONTEND_URL}/dashboard`,
+      });
 
-    res.json({ url: session.url });
-  } catch (error) {
-    console.error("Error creating customer portal session:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post("/supabase-webhook", async (req, res) => {
-  console.log("supabase webhook received");
-  console.log("supabase webhook event", req.body);
-  const { table, type, record } = req.body;
-
-  if (table === "users") {
-    if (type === "INSERT") {
-      try {
-        // Create a user in Keygen
-        // Create the user
-        const response = await fetch(
-          `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/users`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/vnd.api+json",
-              Accept: "application/vnd.api+json",
-              Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
-            },
-            body: JSON.stringify({
-              data: {
-                type: "users",
-                attributes: {
-                  firstName: record.first_name || "",
-                  lastName: record.last_name || "",
-                  email: record.email || "",
-                  password: record.password || "testtest",
-                  metadata: {
-                    supabaseUserId: record.id, // Store Supabase user ID in Keygen metadata
-                  },
-                },
-              },
-            }),
-          }
-        );
-        const { data: user, errors } = await response.json();
-        console.log("keygen user response", user);
-        console.log("keygen errors", errors);
-
-        if (errors) {
-          throw new Error(errors.map((e) => e.detail).toString());
-        }
-
-        console.log(
-          `Created Keygen user ${user.id} for Supabase user ${record.id}`
-        );
-
-        res.sendStatus(200);
-      } catch (error) {
-        console.error("Error creating Keygen user:", error);
-        res.status(500).json({ error: "Internal server error" });
-      }
+      res.json({ url: session.url });
+    } catch (error) {
+      console.error("Error creating customer portal session:", error);
+      res.status(500).json({ error: error.message });
     }
-
-    // if (type === "DELETE") {
-    //   try {
-    //     // Delete the user from Keygen
-    //     const response = await fetch(
-    //       `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/users/${record.metadata.keygen_user_id}`,
-    //       {
-    //         method: "DELETE",
-    //         headers: {
-    //           Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
-    //           "Content-Type": "application/vnd.api+json",
-    //           Accept: "application/vnd.api+json",
-    //         },
-    //       }
-    //     );
-    //     const { data, errors } = await response.json();
-    //     console.log("keygen user response", data);
-    //     console.log("keygen errors", errors);
-
-    //     // Delete the user from Stripe
-    //     const stripeCustomer = await stripe.customers.del(
-    //       record.stripe_customer_id
-    //     );
-    //     console.log("stripe customer", stripeCustomer);
-
-    //     res.sendStatus(200);
-    //   } catch (error) {
-    //     console.error("Error deleting Keygen user:", error);
-    //     res.status(500).json({ error: "Internal server error" });
-    //   }
-    // }
   }
-});
+);
+
+// app.post("/supabase-webhook", async (req, res) => {
+//   console.log("supabase webhook received");
+//   console.log("supabase webhook event", req.body);
+//   const { table, type, record } = req.body;
+
+//   if (table === "users") {
+//     if (type === "INSERT") {
+//       try {
+//         // Create a user in Keygen
+//         // Create the user
+//         const response = await fetch(
+//           `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/users`,
+//           {
+//             method: "POST",
+//             headers: {
+//               "Content-Type": "application/vnd.api+json",
+//               Accept: "application/vnd.api+json",
+//               Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
+//             },
+//             body: JSON.stringify({
+//               data: {
+//                 type: "users",
+//                 attributes: {
+//                   firstName: record.first_name || "",
+//                   lastName: record.last_name || "",
+//                   email: record.email || "",
+//                   password: record.password || "testtest",
+//                   metadata: {
+//                     supabaseUserId: record.id, // Store Supabase user ID in Keygen metadata
+//                   },
+//                 },
+//               },
+//             }),
+//           }
+//         );
+//         const { data: user, errors } = await response.json();
+//         console.log("keygen user response", user);
+//         console.log("keygen errors", errors);
+
+//         if (errors) {
+//           throw new Error(errors.map((e) => e.detail).toString());
+//         }
+
+//         console.log(
+//           `Created Keygen user ${user.id} for Supabase user ${record.id}`
+//         );
+
+//         res.sendStatus(200);
+//       } catch (error) {
+//         console.error("Error creating Keygen user:", error);
+//         res.status(500).json({ error: "Internal server error" });
+//       }
+//     }
+
+//     // if (type === "DELETE") {
+//     //   try {
+//     //     // Delete the user from Keygen
+//     //     const response = await fetch(
+//     //       `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/users/${record.metadata.keygen_user_id}`,
+//     //       {
+//     //         method: "DELETE",
+//     //         headers: {
+//     //           Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
+//     //           "Content-Type": "application/vnd.api+json",
+//     //           Accept: "application/vnd.api+json",
+//     //         },
+//     //       }
+//     //     );
+//     //     const { data, errors } = await response.json();
+//     //     console.log("keygen user response", data);
+//     //     console.log("keygen errors", errors);
+
+//     //     // Delete the user from Stripe
+//     //     const stripeCustomer = await stripe.customers.del(
+//     //       record.stripe_customer_id
+//     //     );
+//     //     console.log("stripe customer", stripeCustomer);
+
+//     //     res.sendStatus(200);
+//     //   } catch (error) {
+//     //     console.error("Error deleting Keygen user:", error);
+//     //     res.status(500).json({ error: "Internal server error" });
+//     //   }
+//     // }
+//   }
+// });
+
+// Test endpoint to verify authentication setup
 
 // Start the server
 app.listen(PORT, () => console.log(`Backend server running on port ${PORT}`));

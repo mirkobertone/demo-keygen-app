@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../hooks/useAuth";
 
 const SignUp: React.FC = () => {
   const [email, setEmail] = useState("");
@@ -53,7 +53,7 @@ const SignUp: React.FC = () => {
             Join us to get started.
           </p>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Or{' '}
+            Or{" "}
             <Link
               to="/signin"
               className="font-medium text-indigo-600 hover:text-indigo-500 transition duration-150 ease-in-out"
@@ -122,7 +122,9 @@ const SignUp: React.FC = () => {
 
           {message && (
             <div className="rounded-md bg-green-50 p-4 mt-4">
-              <div className="text-sm text-green-700 font-medium">{message}</div>
+              <div className="text-sm text-green-700 font-medium">
+                {message}
+              </div>
             </div>
           )}
 
@@ -132,7 +134,7 @@ const SignUp: React.FC = () => {
               disabled={loading}
               className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition duration-150 ease-in-out"
             >
-              {loading ? 'Creating Account...' : 'Sign Up'}
+              {loading ? "Creating Account..." : "Sign Up"}
             </button>
           </div>
         </form>

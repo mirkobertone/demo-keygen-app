@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../hooks/useAuth";
 
 const Dashboard: React.FC = () => {
   const { user, signOut, getKeygenUserId } = useAuth();
