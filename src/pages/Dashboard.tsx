@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../hooks/useAuth";
 
 const Dashboard: React.FC = () => {
-  const { user, signOut, getKeygenUserId } = useAuth();
-  const [licenses, setLicenses] = useState<any[]>([]);
+  const { user, signOut, getKeygenUserId, makeAuthenticatedRequest } =
+    useAuth();
+  const [licenses, setLicenses] = useState<unknown[]>([]);
   const [loadingLicenses, setLoadingLicenses] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutSuccess, setCheckoutSuccess] = useState<string | null>(null);
@@ -12,6 +13,59 @@ const Dashboard: React.FC = () => {
   const BACKEND_URL =
     import.meta.env.VITE_BACKEND_URL || "http://localhost:8080";
   const STRIPE_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID; // Assuming you have a default price ID for subscription
+
+  const fetchLicenses = useCallback(
+    async (userId: string) => {
+      setLoadingLicenses(true);
+      try {
+        const response = await makeAuthenticatedRequest(
+          `${BACKEND_URL}/api/v1/licenses/${userId}`
+        );
+        if (!response.ok) {
+          throw new Error("Failed to fetch licenses");
+        }
+        const data = await response.json();
+        console.log("Licenses API response:", data);
+        // Handle both direct array response and nested data response
+        const licensesArray = Array.isArray(data) ? data : data.data || [];
+        console.log("Processed licenses array:", licensesArray);
+        setLicenses(licensesArray);
+
+        // Handle user metadata extraction from response
+        // Check if response has included data (for broader queries) or if it's a direct array
+        if (data.included) {
+          const keygenUser = data.included.find(
+            (item: unknown) =>
+              (item as { type: string; id: string }).type === "users" &&
+              (item as { type: string; id: string }).id === userId
+          );
+          if (
+            keygenUser &&
+            (
+              keygenUser as {
+                attributes?: { metadata?: { stripe_customer_id?: string } };
+              }
+            ).attributes?.metadata?.stripe_customer_id
+          ) {
+            setStripeCustomerId(
+              (
+                keygenUser as {
+                  attributes: { metadata: { stripe_customer_id: string } };
+                }
+              ).attributes.metadata.stripe_customer_id
+            );
+          }
+        }
+        // Note: For direct array responses, user metadata would need to be fetched separately
+      } catch (error) {
+        console.error("Error fetching licenses:", error);
+        setLicenses([]); // Ensure licenses is always an array
+      } finally {
+        setLoadingLicenses(false);
+      }
+    },
+    [makeAuthenticatedRequest, BACKEND_URL]
+  );
 
   useEffect(() => {
     if (user) {
@@ -34,7 +88,10 @@ const Dashboard: React.FC = () => {
         "Payment successful! Your license is being processed..."
       );
       if (user) {
-        fetchLicenses(user.id);
+        const keygenUserId = getKeygenUserId();
+        if (keygenUserId) {
+          fetchLicenses(keygenUserId);
+        }
       }
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -45,33 +102,7 @@ const Dashboard: React.FC = () => {
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [user]);
-
-  const fetchLicenses = async (userId: string) => {
-    setLoadingLicenses(true);
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/v1/licenses/${userId}`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch licenses");
-      }
-      const data = await response.json();
-      setLicenses(data.data);
-
-      // Assuming Keygen user metadata is included in the response for a specific user,
-      // or you might need a separate endpoint to fetch user details from Keygen.
-      // For this example, let's assume `data.included` might contain user data if fetched broadly.
-      const keygenUser = data.included?.find(
-        (item: any) => item.type === "users" && item.id === userId
-      );
-      if (keygenUser && keygenUser.attributes?.metadata?.stripe_customer_id) {
-        setStripeCustomerId(keygenUser.attributes.metadata.stripe_customer_id);
-      }
-    } catch (error) {
-      console.error("Error fetching licenses:", error);
-    } finally {
-      setLoadingLicenses(false);
-    }
-  };
+  }, [user, getKeygenUserId, fetchLicenses]);
 
   const handleSignOut = async () => {
     try {
@@ -105,17 +136,20 @@ const Dashboard: React.FC = () => {
     }
 
     try {
-      const response = await fetch(`${BACKEND_URL}/create-checkout-session`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          priceId: STRIPE_PRICE_ID,
-          customerEmail: user.email,
-          stripeCustomerId: stripeCustomerId,
-        }),
-      });
+      const response = await makeAuthenticatedRequest(
+        `${BACKEND_URL}/create-checkout-session`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            priceId: STRIPE_PRICE_ID,
+            customerEmail: user.email,
+            stripeCustomerId: stripeCustomerId,
+          }),
+        }
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -124,9 +158,11 @@ const Dashboard: React.FC = () => {
 
       const { url } = await response.json();
       window.location.href = url; // Redirect to Stripe Checkout
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error initiating Stripe Checkout:", error);
-      setCheckoutError(error.message);
+      setCheckoutError(
+        error instanceof Error ? error.message : "An error occurred"
+      );
     }
   };
 
@@ -139,7 +175,7 @@ const Dashboard: React.FC = () => {
     }
 
     try {
-      const response = await fetch(
+      const response = await makeAuthenticatedRequest(
         `${BACKEND_URL}/create-customer-portal-session`,
         {
           method: "POST",
@@ -159,9 +195,11 @@ const Dashboard: React.FC = () => {
 
       const { url } = await response.json();
       window.location.href = url; // Redirect to Stripe Customer Portal
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error initiating Stripe Customer Portal:", error);
-      setCheckoutError(error.message);
+      setCheckoutError(
+        error instanceof Error ? error.message : "An error occurred"
+      );
     }
   };
 
@@ -273,39 +311,50 @@ const Dashboard: React.FC = () => {
                     Loading licenses...
                   </p>
                 </div>
-              ) : licenses.length > 0 ? (
+              ) : licenses && licenses.length > 0 ? (
                 <div className="text-left">
                   <h3 className="text-lg font-medium text-gray-900 mb-4">
                     Your Licenses
                   </h3>
                   <ul className="divide-y divide-gray-200">
-                    {licenses.map((license) => (
-                      <li
-                        key={license.id}
-                        className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center"
-                      >
-                        <div className="mb-2 sm:mb-0">
-                          <p className="text-sm font-medium text-indigo-600">
-                            {license.attributes.name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            Key: {license.attributes.key}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            Status: {license.attributes.status}
-                          </p>
-                        </div>
-                        <span
-                          className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            license.attributes.status === "ACTIVE"
-                              ? "bg-green-100 text-green-800"
-                              : "bg-yellow-100 text-yellow-800"
-                          }`}
-                        >
-                          {license.attributes.status}
-                        </span>
-                      </li>
-                    ))}
+                    {licenses &&
+                      licenses.map((license) => {
+                        const licenseData = license as {
+                          id: string;
+                          attributes: {
+                            name: string;
+                            key: string;
+                            status: string;
+                          };
+                        };
+                        return (
+                          <li
+                            key={licenseData.id}
+                            className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center"
+                          >
+                            <div className="mb-2 sm:mb-0">
+                              <p className="text-sm font-medium text-indigo-600">
+                                {licenseData.attributes.name}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                Key: {licenseData.attributes.key}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                Status: {licenseData.attributes.status}
+                              </p>
+                            </div>
+                            <span
+                              className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                licenseData.attributes.status === "ACTIVE"
+                                  ? "bg-green-100 text-green-800"
+                                  : "bg-yellow-100 text-yellow-800"
+                              }`}
+                            >
+                              {licenseData.attributes.status}
+                            </span>
+                          </li>
+                        );
+                      })}
                   </ul>
                 </div>
               ) : (

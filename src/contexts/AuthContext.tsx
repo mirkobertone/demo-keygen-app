@@ -12,6 +12,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // API base URL
   const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+  console.log("API_BASE_URL:", API_BASE_URL);
 
   // Helper function to get auth token from localStorage
   const getAuthToken = useCallback(() => {
@@ -47,11 +48,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const makeAuthenticatedRequest = useCallback(
     async (url: string, options: RequestInit = {}) => {
       const token = getAuthToken();
+      console.log(
+        "makeAuthenticatedRequest - token:",
+        token ? "exists" : "null"
+      );
+      console.log("makeAuthenticatedRequest - url:", url);
+
       const headers = {
         "Content-Type": "application/json",
         ...(token && { Authorization: `Bearer ${token}` }),
         ...options.headers,
       };
+
+      console.log("makeAuthenticatedRequest - headers:", headers);
 
       return fetch(url, {
         ...options,
@@ -65,32 +74,51 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Check if user is already authenticated on app load
     const checkAuthStatus = async () => {
       const token = getAuthToken();
-      if (token) {
-        try {
-          const response = await makeAuthenticatedRequest(
-            `${API_BASE_URL}/auth/user`
-          );
-          if (response.ok) {
-            const data = await response.json();
-            setUser(data.user);
-            setSession({
-              user: data.user,
-              access_token: token,
-              refresh_token: "",
-              token_type: "Bearer",
-            });
-          } else {
-            // Token is invalid, remove it
-            removeAuthToken();
-            removeKeygenToken();
-          }
-        } catch (error) {
-          console.error("Auth check failed:", error);
+      console.log("checkAuthStatus - token:", token ? "exists" : "null");
+
+      if (!token) {
+        // No token, user is not authenticated
+        setLoading(false);
+        return;
+      }
+
+      try {
+        console.log(
+          "Making authenticated request to:",
+          `${API_BASE_URL}/auth/user`
+        );
+        const response = await makeAuthenticatedRequest(
+          `${API_BASE_URL}/auth/user`
+        );
+        console.log("Auth check response status:", response.status);
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log("Auth check successful, setting user:", data.user);
+          setUser(data.user);
+          setSession({
+            user: data.user,
+            access_token: token,
+            refresh_token: "",
+            token_type: "Bearer",
+          });
+        } else {
+          // Token is invalid, remove it
+          console.log("Auth check failed, removing tokens");
           removeAuthToken();
           removeKeygenToken();
+          setUser(null);
+          setSession(null);
         }
+      } catch (error) {
+        console.error("Auth check failed:", error);
+        removeAuthToken();
+        removeKeygenToken();
+        setUser(null);
+        setSession(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     checkAuthStatus();
@@ -141,6 +169,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
 
       // Store the tokens and update state
+      console.log("Signin successful - token:", data.token ? "exists" : "null");
+      console.log(
+        "Signin successful - keygenToken:",
+        data.keygenToken ? "exists" : "null"
+      );
+
       setAuthToken(data.token);
       if (data.keygenToken) {
         setKeygenToken(data.keygenToken);
@@ -187,6 +221,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     signOut,
     getKeygenUserId,
     getKeygenToken: getKeygenTokenValue,
+    makeAuthenticatedRequest,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

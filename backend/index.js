@@ -339,31 +339,15 @@ app.post("/auth/signin", async (req, res) => {
       return res.status(401).json({ error: error.message });
     }
 
-    // If Supabase authentication succeeds, try Keygen authentication
-    let keygenToken = null;
-    let keygenUserId = data.user.user_metadata?.keygen_user_id;
-
-    if (keygenUserId) {
-      try {
-        // Use the user's email and password to authenticate with Keygen
-        keygenToken = await authenticateUser(email, password);
-        const license = await retrieveLicense(keygenToken);
-        console.log("keygen license", license);
-        console.log("Keygen authentication successful for user:", email);
-      } catch (keygenError) {
-        console.error("Keygen authentication failed:", keygenError);
-        // Don't fail the entire signin if Keygen auth fails
-        // The user can still access the app with Supabase authentication
-      }
-    }
-
+    const authUser = await authenticateUser(email, password);
+    console.log("authUser", authUser);
     // Create JWT token
     const token = jwt.sign(
       {
         userId: data.user.id,
         email: data.user.email,
-        keygenUserId: keygenUserId,
-        keygenToken: keygenToken,
+        keygenUserId: authUser.id,
+        keygenToken: authUser.attributes.token,
       },
       JWT_SECRET,
       { expiresIn: "24h" }
@@ -373,7 +357,7 @@ app.post("/auth/signin", async (req, res) => {
       user: data.user,
       session: data.session,
       token,
-      keygenToken,
+      keygenToken: authUser.attributes.token,
     });
   } catch (error) {
     console.error("Signin error:", error);
@@ -394,13 +378,20 @@ app.post("/auth/signout", authenticateToken, async (req, res) => {
 
 app.get("/auth/verify", authenticateToken, async (req, res) => {
   try {
-    // Get fresh user data from Supabase
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser(req.user.userId);
+    // Get fresh user data from Supabase using admin API
+    const response = await axios.get(
+      `${process.env.SUPABASE_URL}/auth/v1/admin/users/${req.user.userId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        },
+      }
+    );
 
-    if (error || !user) {
+    const user = response.data;
+
+    if (!user) {
       return res.status(401).json({ error: "User not found" });
     }
 
@@ -410,19 +401,30 @@ app.get("/auth/verify", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Verify error:", error);
+    if (error.response?.status === 404) {
+      return res.status(401).json({ error: "User not found" });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
 app.get("/auth/user", authenticateToken, async (req, res) => {
   try {
-    // Get fresh user data from Supabase
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser(req.user.userId);
+    // Get fresh user data from Supabase using admin API
+    const response = await axios.get(
+      `${process.env.SUPABASE_URL}/auth/v1/admin/users/${req.user.userId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        },
+      }
+    );
 
-    if (error || !user) {
+    const user = response.data;
+    console.log("user", user);
+
+    if (!user) {
       return res.status(401).json({ error: "User not found" });
     }
 
@@ -432,6 +434,9 @@ app.get("/auth/user", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Get user error:", error);
+    if (error.response?.status === 404) {
+      return res.status(401).json({ error: "User not found" });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -545,22 +550,24 @@ app.post("/get-user-keygen-id", authenticateToken, async (req, res) => {
 app.get("/api/v1/licenses/:userId", authenticateToken, async (req, res) => {
   try {
     const { userId } = req.params;
-    const response = await axios.get(
-      `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/licenses`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
-          Accept: "application/vnd.api+json",
-        },
-        params: {
-          "filter[user]": userId,
-        },
-      }
-    );
+    // const response = await axios.get(
+    //   `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/licenses`,
+    //   {
+    //     headers: {
+    //       Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
+    //       Accept: "application/vnd.api+json",
+    //     },
+    //     params: {
+    //       "filter[user]": userId,
+    //     },
+    //   }
+    // );
+
+    const license = await retrieveLicense(req.user.keygenToken);
+
     console.log("user id", userId);
 
-    console.log(response.data);
-    res.json(response.data);
+    res.json(license);
   } catch (error) {
     console.error(
       "Error fetching Keygen licenses:",
@@ -829,6 +836,27 @@ app.post(
 // });
 
 // Test endpoint to verify authentication setup
+app.get("/auth/test", (req, res) => {
+  res.json({
+    message: "Authentication server is running",
+    endpoints: {
+      signup: "POST /auth/signup",
+      signin: "POST /auth/signin",
+      signout: "POST /auth/signout",
+      verify: "GET /auth/verify",
+      user: "GET /auth/user",
+    },
+  });
+});
+
+// Debug endpoint to check headers
+app.get("/auth/debug", (req, res) => {
+  res.json({
+    headers: req.headers,
+    authorization: req.headers.authorization,
+    user: req.user || "No user in request",
+  });
+});
 
 // Start the server
 app.listen(PORT, () => console.log(`Backend server running on port ${PORT}`));

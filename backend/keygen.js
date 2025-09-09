@@ -28,7 +28,7 @@ async function authenticateUser(username, password) {
   }
 
   console.log("TOKEN:", data.attributes.token);
-  return data.attributes.token; // Return the token data, not the response object
+  return data; // Return the token data, not the response object
 }
 
 async function retrieveLicense(token) {
@@ -46,6 +46,7 @@ async function retrieveLicense(token) {
   const { data: license, errors } = await response.json();
   console.log("keygen license response", license);
   console.log("keygen errors", errors);
+  return license;
 }
 async function createAccount(email, password, supabaseUserId) {
   const response = await fetch(

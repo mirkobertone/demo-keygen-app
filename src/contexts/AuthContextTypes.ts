@@ -36,6 +36,10 @@ export interface AuthContextType {
   signOut: () => Promise<void>;
   getKeygenUserId: () => string | null;
   getKeygenToken: () => string | null;
+  makeAuthenticatedRequest: (
+    url: string,
+    options?: RequestInit
+  ) => Promise<Response>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(
