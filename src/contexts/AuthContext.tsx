@@ -7,6 +7,10 @@ type User = {
   email?: string;
   created_at?: string;
   last_sign_in_at?: string;
+  user_metadata?: {
+    keygen_user_id?: string;
+    [key: string]: any;
+  };
 };
 
 type Session = {
@@ -25,6 +29,7 @@ interface AuthContextType {
   signUp: (email: string, password: string) => Promise<{ error: any }>;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
+  getKeygenUserId: () => string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -86,6 +91,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     await supabase.auth.signOut();
   };
 
+  const getKeygenUserId = () => {
+    return user?.user_metadata?.keygen_user_id || null;
+  };
+
   const value = {
     user,
     session,
@@ -93,6 +102,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     signUp,
     signIn,
     signOut,
+    getKeygenUserId,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

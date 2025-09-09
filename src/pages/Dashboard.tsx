@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 
 const Dashboard: React.FC = () => {
-  const { user, signOut } = useAuth();
+  const { user, signOut, getKeygenUserId } = useAuth();
   const [licenses, setLicenses] = useState<any[]>([]);
   const [loadingLicenses, setLoadingLicenses] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -15,7 +15,12 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     if (user) {
-      fetchLicenses(user.id);
+      const keygenUserId = getKeygenUserId();
+      if (keygenUserId) {
+        fetchLicenses(keygenUserId);
+      } else {
+        console.log("No Keygen user ID found in metadata");
+      }
     }
 
     // Check for successful payment return from Stripe
@@ -92,6 +97,13 @@ const Dashboard: React.FC = () => {
       return;
     }
 
+    // Get Stripe customer ID from user metadata
+    const stripeCustomerId = user.user_metadata?.stripe_customer_id;
+    if (!stripeCustomerId) {
+      setCheckoutError("Stripe customer ID not found. Please contact support.");
+      return;
+    }
+
     try {
       const response = await fetch(`${BACKEND_URL}/create-checkout-session`, {
         method: "POST",
@@ -101,6 +113,7 @@ const Dashboard: React.FC = () => {
         body: JSON.stringify({
           priceId: STRIPE_PRICE_ID,
           customerEmail: user.email,
+          stripeCustomerId: stripeCustomerId,
         }),
       });
 
@@ -220,6 +233,14 @@ const Dashboard: React.FC = () => {
                     {user?.last_sign_in_at
                       ? new Date(user.last_sign_in_at).toLocaleDateString()
                       : "N/A"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-sm font-medium text-gray-500">
+                    Keygen User ID
+                  </dt>
+                  <dd className="mt-1 text-sm text-gray-900 break-all">
+                    {getKeygenUserId() || "Not available"}
                   </dd>
                 </div>
               </dl>

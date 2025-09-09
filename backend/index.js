@@ -153,6 +153,79 @@ app.post(
         // and then reactivating their licenses
         break;
 
+      case "invoice.paid":
+        console.log("invoice paid", event.data.object);
+        const customer = event.data.object.customer;
+        console.log("customer", customer);
+        const stripeCustomerWithMetadata = await stripe.customers.retrieve(
+          customer,
+          {
+            expand: ["subscriptions"],
+          }
+        );
+        console.log(
+          "stripe customer with metadata",
+          stripeCustomerWithMetadata
+        );
+        const stripeSubscriptionId =
+          stripeCustomerWithMetadata.subscriptions.data[0].id;
+
+        // const createdSubscription = event.data.object;
+        // const createdCustomerId = createdSubscription.customer;
+        // const stripeSubscriptionId = createdSubscription.id;
+        // console.log(`Subscription created for customer: ${createdCustomerId}`);
+
+        // const keygenLicense = await fetch(
+        //   `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/licenses`,
+        //   {
+        //     method: "POST",
+        //     headers: {
+        //       Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
+        //       "Content-Type": "application/vnd.api+json",
+        //       Accept: "application/vnd.api+json",
+        //     },
+        //     body: JSON.stringify({
+        //       data: {
+        //         type: "licenses",
+        //         attributes: {
+        //           metadata: { stripeSubscriptionId: stripeSubscriptionId },
+        //         },
+        //         relationships: {
+        //           policy: {
+        //             data: {
+        //               type: "policies",
+        //               id: process.env.KEYGEN_POLICY_ID,
+        //             },
+        //           },
+        //           user: {
+        //             data: {
+        //               type: "users",
+        //               id: stripeCustomer.metadata.keygenUserId,
+        //             },
+        //           },
+        //         },
+        //       },
+        //     }),
+        //   }
+        // );
+        // const { data, errors } = await keygenLicense.json();
+        // if (errors) {
+        //   res.sendStatus(500);
+
+        //   // If you receive an error here, then you may want to handle the fact the customer
+        //   // may have been charged for a license that they didn't receive e.g. easiest way
+        //   // would be to create it manually, or refund their subscription charge.
+        //   throw new Error(errors.map((e) => e.detail).toString());
+        // }
+
+        // All is good! License was successfully created for the new Stripe customer's
+        // Keygen user account. Next up would be for us to email the license key to
+        // our user's email using `stripeCustomer.email` or something similar.
+
+        // Let Stripe know the event was received successfully.
+        res.sendStatus(200);
+        break;
+
       // Handle other event types if needed
       default:
         console.log(`Unhandled event type ${event.type}`);
@@ -168,9 +241,29 @@ app.use(express.json());
 
 // Stripe Checkout Session Endpoint
 app.post("/create-checkout-session", async (req, res) => {
-  const { priceId, customerEmail } = req.body;
+  const { priceId, customerEmail, stripeCustomerId } = req.body;
+
+  // Require stripeCustomerId to prevent creating new customers
+  if (!stripeCustomerId) {
+    return res.status(400).json({
+      error: "stripeCustomerId is required. Cannot create new customers.",
+    });
+  }
 
   try {
+    // Verify the customer exists before creating checkout session
+    const customer = await stripe.customers.retrieve(stripeCustomerId);
+
+    if (customer.deleted) {
+      return res.status(400).json({
+        error: "Customer has been deleted and cannot be used.",
+      });
+    }
+
+    console.log(
+      `Using existing customer: ${stripeCustomerId} (${customer.email})`
+    );
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
@@ -180,50 +273,105 @@ app.post("/create-checkout-session", async (req, res) => {
         },
       ],
       mode: "subscription",
-      customer_email: customerEmail,
+      customer: stripeCustomerId, // Always use existing customer
       success_url: `${process.env.FRONTEND_URL}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL}/dashboard?canceled=true`,
       metadata: {
         customer_email: customerEmail,
+        stripe_customer_id: stripeCustomerId,
       },
     });
 
     res.json({ url: session.url });
   } catch (error) {
     console.error("Error creating checkout session:", error);
+
+    if (
+      error.type === "StripeInvalidRequestError" &&
+      error.code === "resource_missing"
+    ) {
+      res.status(400).json({
+        error: "Customer not found. Please provide a valid stripeCustomerId.",
+      });
+    } else {
+      res.status(500).json({ error: error.message });
+    }
+  }
+});
+
+// Helper endpoint to get user's Keygen ID from Supabase user metadata
+app.post("/get-user-keygen-id", async (req, res) => {
+  const { supabaseUserId } = req.body;
+
+  if (!supabaseUserId) {
+    return res.status(400).json({ error: "supabaseUserId is required" });
+  }
+
+  try {
+    const response = await fetch(
+      `${process.env.SUPABASE_URL}/auth/v1/admin/users/${supabaseUserId}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Supabase request failed: ${response.status}`);
+    }
+
+    const user = await response.json();
+
+    if (user && user.user_metadata && user.user_metadata.keygen_user_id) {
+      res.json({
+        found: true,
+        keygenUserId: user.user_metadata.keygen_user_id,
+        supabaseUserId: supabaseUserId,
+      });
+    } else {
+      res.json({
+        found: false,
+        message: "Keygen user ID not found in user metadata",
+      });
+    }
+  } catch (error) {
+    console.error("Error getting user Keygen ID:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Basic Keygen API proxy (optional, for fetching license info later)
 // You'd likely want more robust handling and auth for this in production
-// app.get("/api/v1/licenses/:userId", async (req, res) => {
-//   try {
-//     const { userId } = req.params;
-//     const response = await axios.get(
-//       `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/licenses`,
-//       {
-//         headers: {
-//           Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
-//           Accept: "application/vnd.api+json",
-//         },
-//         params: {
-//           "filter[user]": userId,
-//         },
-//       }
-//     );
-//     console.log("user id", userId);
+app.get("/api/v1/licenses/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const response = await axios.get(
+      `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/licenses`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.KEYGEN_PRODUCT_TOKEN}`,
+          Accept: "application/vnd.api+json",
+        },
+        params: {
+          "filter[user]": userId,
+        },
+      }
+    );
+    console.log("user id", userId);
 
-//     console.log(response.data);
-//     res.json(response.data);
-//   } catch (error) {
-//     console.error(
-//       "Error fetching Keygen licenses:",
-//       error.response ? error.response.data : error.message
-//     );
-//     res.status(500).json({ error: "Failed to fetch licenses" });
-//   }
-// });
+    console.log(response.data);
+    res.json(response.data);
+  } catch (error) {
+    console.error(
+      "Error fetching Keygen licenses:",
+      error.response ? error.response.data : error.message
+    );
+    res.status(500).json({ error: "Failed to fetch licenses" });
+  }
+});
 
 // Keygen Webhook Handler
 app.post("/keygen-webhooks", async (req, res) => {
@@ -270,18 +418,68 @@ app.post("/keygen-webhooks", async (req, res) => {
         // You can add additional logic here, such as sending welcome emails
         const { data: keygenUser } = JSON.parse(keygenEvent.attributes.payload);
         console.log("keygen user", keygenUser);
+
+        // Get Supabase user ID from Keygen user metadata
+        const supabaseUserId = keygenUser.attributes.metadata?.supabaseUserId;
+
+        if (supabaseUserId) {
+          console.log(
+            `Updating Supabase user metadata for user ${supabaseUserId} with Keygen ID: ${keygenUser.id}`
+          );
+
+          // Update Supabase user metadata with Keygen user ID using Admin API
+          try {
+            const supabaseUpdateResponse = await fetch(
+              `${process.env.SUPABASE_URL}/auth/v1/admin/users/${supabaseUserId}`,
+              {
+                method: "PUT",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+                  apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+                },
+                body: JSON.stringify({
+                  user_metadata: {
+                    keygen_user_id: keygenUser.id,
+                  },
+                }),
+              }
+            );
+
+            if (supabaseUpdateResponse.ok) {
+              console.log(
+                `Successfully updated Supabase user metadata for user ${supabaseUserId} with Keygen ID: ${keygenUser.id}`
+              );
+            } else {
+              console.error(
+                "Failed to update Supabase user metadata with Keygen ID:",
+                await supabaseUpdateResponse.text()
+              );
+            }
+          } catch (supabaseError) {
+            console.error(
+              "Error updating Supabase user metadata:",
+              supabaseError
+            );
+          }
+        } else {
+          console.log("No Supabase user ID found in Keygen user metadata");
+        }
+
+        // Create Stripe customer for the Keygen user
         const stripeCustomer = await stripe.customers.create({
           description: `Customer for Keygen user ${keygenUser.attributes.email}`,
           email: keygenUser.attributes.email,
-          // Source is a Stripe token obtained with Stripe.js during user creation and
-          // temporarily stored in the user's metadata attribute.
-          // source: keygenUser.attributes.metadata.stripeToken || "",
           // Store the user's Keygen ID within the Stripe customer so that we can lookup
           // a Stripe customer's Keygen account.
-          metadata: { keygenUserId: keygenUser.id },
+          metadata: {
+            keygenUserId: keygenUser.id,
+            supabaseUserId: supabaseUserId || null,
+          },
         });
         console.log("stripe customer", stripeCustomer);
 
+        // Update Keygen user with Stripe customer ID
         const update = await fetch(
           `https://api.keygen.sh/v1/accounts/${process.env.KEYGEN_ACCOUNT_ID}/users/${keygenUser.id}`,
           {
@@ -295,7 +493,10 @@ app.post("/keygen-webhooks", async (req, res) => {
               data: {
                 type: "users",
                 attributes: {
-                  metadata: { stripeCustomerId: stripeCustomer.id },
+                  metadata: {
+                    stripeCustomerId: stripeCustomer.id,
+                    supabaseUserId: supabaseUserId || null,
+                  },
                 },
               },
             }),
@@ -307,7 +508,7 @@ app.post("/keygen-webhooks", async (req, res) => {
         }
 
         // All is good! Stripe customer was successfully created for the new Keygen
-        // user. Let Keygen know the event was received successfully.
+        // user and Supabase record was updated. Let Keygen know the event was received successfully.
         res.sendStatus(200);
         break;
 
@@ -366,17 +567,25 @@ app.post("/supabase-webhook", async (req, res) => {
                   lastName: record.last_name || "",
                   email: record.email || "",
                   password: record.password || "testtest",
-                },
-                metadata: {
-                  supabase_user_id: record.id,
+                  metadata: {
+                    supabaseUserId: record.id, // Store Supabase user ID in Keygen metadata
+                  },
                 },
               },
             }),
           }
         );
         const { data: user, errors } = await response.json();
-        // console.log("keygen user response", user);
+        console.log("keygen user response", user);
         console.log("keygen errors", errors);
+
+        if (errors) {
+          throw new Error(errors.map((e) => e.detail).toString());
+        }
+
+        console.log(
+          `Created Keygen user ${user.id} for Supabase user ${record.id}`
+        );
 
         res.sendStatus(200);
       } catch (error) {
