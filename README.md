@@ -181,11 +181,11 @@ backend/
 ### Backend Routes
 
 - `GET /` - Serves a simple purchase form (similar to the reference example)
-- `POST /create-checkout-session` - Creates a new Stripe Checkout session
+- `POST /checkout` - Creates a new Stripe Checkout session
 - `POST /stripe-webhooks` - Handles Stripe webhook events (e.g., `checkout.session.completed`, `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.payment_succeeded`)
 - `POST /keygen-webhooks` - Handles Keygen webhook events (e.g., `license.created`, `license.validated`, `license.invalidated`)
 - `GET /api/v1/licenses/:userId` - (Proxy) Fetches Keygen licenses for a specific user, including Stripe Customer ID from Keygen user metadata
-- `POST /create-customer-portal-session` - Creates a new Stripe Customer Portal session URL for subscription management
+- `POST /customer-portal` - Creates a new Stripe Customer Portal session URL for subscription management
 
 ## Authentication Flow
 

@@ -109,8 +109,7 @@ const Dashboard: React.FC = () => {
       return;
     }
 
-    // Get Stripe customer ID from user metadata
-    const stripeCustomerId = user.user_metadata?.stripe_customer_id;
+    // Get Stripe customer ID from the state (set by /whoami API)
     if (!stripeCustomerId) {
       setCheckoutError("Stripe customer ID not found. Please contact support.");
       return;
@@ -118,7 +117,7 @@ const Dashboard: React.FC = () => {
 
     try {
       const response = await makeAuthenticatedRequest(
-        `${BACKEND_URL}/create-checkout-session`,
+        `${BACKEND_URL}/checkout`,
         {
           method: "POST",
           headers: {
@@ -157,13 +156,16 @@ const Dashboard: React.FC = () => {
 
     try {
       const response = await makeAuthenticatedRequest(
-        `${BACKEND_URL}/create-customer-portal-session`,
+        `${BACKEND_URL}/customer-portal`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ stripeCustomerId }),
+          body: JSON.stringify({
+            stripeCustomerId,
+            returnUrl: `${window.location.origin}/dashboard`,
+          }),
         }
       );
 

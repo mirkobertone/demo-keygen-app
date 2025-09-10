@@ -48,8 +48,8 @@ app.use(
 );
 
 // Register preflight handlers only for known POST endpoints
-app.options("/create-checkout-session", cors());
-app.options("/create-customer-portal-session", cors());
+app.options("/checkout", cors());
+app.options("/customer-portal", cors());
 app.options("/stripe-webhooks", cors());
 app.options("/keygen-webhooks", cors());
 app.options("/signup", cors());
@@ -442,7 +442,7 @@ app.get("/user", authenticateToken, async (req, res) => {
 });
 
 // Stripe Checkout Session Endpoint
-app.post("/create-checkout-session", authenticateToken, async (req, res) => {
+app.post("/checkout", authenticateToken, async (req, res) => {
   const { priceId, customerEmail, stripeCustomerId } = req.body;
 
   // Require stripeCustomerId to prevent creating new customers
@@ -728,25 +728,21 @@ app.post("/keygen-webhooks", async (req, res) => {
 });
 
 // Stripe Customer Portal Session Endpoint
-app.post(
-  "/create-customer-portal-session",
-  authenticateToken,
-  async (req, res) => {
-    const { stripeCustomerId } = req.body;
+app.post("/customer-portal", authenticateToken, async (req, res) => {
+  const { stripeCustomerId } = req.body;
 
-    try {
-      const session = await stripe.billingPortal.sessions.create({
-        customer: stripeCustomerId,
-        return_url: `${process.env.FRONTEND_URL}/dashboard`,
-      });
+  try {
+    const session = await stripe.billingPortal.sessions.create({
+      customer: stripeCustomerId,
+      return_url: `${process.env.FRONTEND_URL}/dashboard`,
+    });
 
-      res.json({ url: session.url });
-    } catch (error) {
-      console.error("Error creating customer portal session:", error);
-      res.status(500).json({ error: error.message });
-    }
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error("Error creating customer portal session:", error);
+    res.status(500).json({ error: error.message });
   }
-);
+});
 
 // app.post("/supabase-webhook", async (req, res) => {
 //   console.log("supabase webhook received");
