@@ -52,9 +52,9 @@ app.options("/create-checkout-session", cors());
 app.options("/create-customer-portal-session", cors());
 app.options("/stripe-webhooks", cors());
 app.options("/keygen-webhooks", cors());
-app.options("/auth/signup", cors());
-app.options("/auth/signin", cors());
-app.options("/auth/signout", cors());
+app.options("/signup", cors());
+app.options("/signin", cors());
+app.options("/signout", cors());
 
 // Stripe Webhook Handler (must be before express.json() middleware)
 app.post(
@@ -281,7 +281,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 // Authentication endpoints
-app.post("/auth/signup", async (req, res) => {
+app.post("/signup", async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -321,7 +321,7 @@ app.post("/auth/signup", async (req, res) => {
   }
 });
 
-app.post("/auth/signin", async (req, res) => {
+app.post("/signin", async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -365,7 +365,7 @@ app.post("/auth/signin", async (req, res) => {
   }
 });
 
-app.post("/auth/signout", authenticateToken, async (req, res) => {
+app.post("/signout", authenticateToken, async (req, res) => {
   try {
     // Note: Server-side signout doesn't invalidate the JWT token
     // In a production app, you might want to maintain a blacklist of tokens
@@ -376,11 +376,11 @@ app.post("/auth/signout", authenticateToken, async (req, res) => {
   }
 });
 
-app.get("/auth/verify", authenticateToken, async (req, res) => {
+app.get("/verify", authenticateToken, async (req, res) => {
   try {
     // Get fresh user data from Supabase using admin API
     const response = await axios.get(
-      `${process.env.SUPABASE_URL}/auth/v1/admin/users/${req.user.userId}`,
+      `${process.env.SUPABASE_URL}/v1/admin/users/${req.user.userId}`,
       {
         headers: {
           Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
@@ -408,11 +408,11 @@ app.get("/auth/verify", authenticateToken, async (req, res) => {
   }
 });
 
-app.get("/auth/user", authenticateToken, async (req, res) => {
+app.get("/user", authenticateToken, async (req, res) => {
   try {
     // Get fresh user data from Supabase using admin API
     const response = await axios.get(
-      `${process.env.SUPABASE_URL}/auth/v1/admin/users/${req.user.userId}`,
+      `${process.env.SUPABASE_URL}/v1/admin/users/${req.user.userId}`,
       {
         headers: {
           Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
@@ -511,7 +511,7 @@ app.post("/get-user-keygen-id", authenticateToken, async (req, res) => {
 
   try {
     const response = await fetch(
-      `${process.env.SUPABASE_URL}/auth/v1/admin/users/${supabaseUserId}`,
+      `${process.env.SUPABASE_URL}/v1/admin/users/${supabaseUserId}`,
       {
         method: "GET",
         headers: {
@@ -634,7 +634,7 @@ app.post("/keygen-webhooks", async (req, res) => {
           // Update Supabase user metadata with Keygen user ID using Admin API
           try {
             const supabaseUpdateResponse = await fetch(
-              `${process.env.SUPABASE_URL}/auth/v1/admin/users/${supabaseUserId}`,
+              `${process.env.SUPABASE_URL}/v1/admin/users/${supabaseUserId}`,
               {
                 method: "PUT",
                 headers: {
@@ -836,21 +836,21 @@ app.post(
 // });
 
 // Test endpoint to verify authentication setup
-app.get("/auth/test", (req, res) => {
+app.get("/test", (req, res) => {
   res.json({
     message: "Authentication server is running",
     endpoints: {
-      signup: "POST /auth/signup",
-      signin: "POST /auth/signin",
-      signout: "POST /auth/signout",
-      verify: "GET /auth/verify",
-      user: "GET /auth/user",
+      signup: "POST /signup",
+      signin: "POST /signin",
+      signout: "POST /signout",
+      verify: "GET /verify",
+      user: "GET /user",
     },
   });
 });
 
 // Debug endpoint to check headers
-app.get("/auth/debug", (req, res) => {
+app.get("/debug", (req, res) => {
   res.json({
     headers: req.headers,
     authorization: req.headers.authorization,

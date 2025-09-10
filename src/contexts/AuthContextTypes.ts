@@ -6,6 +6,7 @@ export type User = {
   email?: string;
   created_at?: string;
   last_sign_in_at?: string;
+  keygenUserId?: string;
   user_metadata?: {
     keygen_user_id?: string;
     [key: string]: unknown;
@@ -40,6 +41,30 @@ export interface AuthContextType {
     url: string,
     options?: RequestInit
   ) => Promise<Response>;
+  fetchUserInfo: () => Promise<{
+    user: {
+      id: string;
+      attributes: {
+        metadata: {
+          supabaseUserId: string;
+          stripeCustomerId: string;
+        };
+      };
+    };
+    licenses: Array<{
+      id: string;
+      attributes: {
+        name: string;
+        key: string;
+        status: string;
+        expiry: string | null;
+        uses: number;
+        maxUses: number | null;
+        floating: boolean;
+        protected: boolean;
+      };
+    }>;
+  }>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(

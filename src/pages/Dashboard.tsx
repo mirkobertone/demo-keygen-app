@@ -2,76 +2,57 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../hooks/useAuth";
 
 const Dashboard: React.FC = () => {
-  const { user, signOut, getKeygenUserId, makeAuthenticatedRequest } =
-    useAuth();
+  const {
+    user,
+    signOut,
+    getKeygenUserId,
+    makeAuthenticatedRequest,
+    fetchUserInfo,
+  } = useAuth();
   const [licenses, setLicenses] = useState<unknown[]>([]);
   const [loadingLicenses, setLoadingLicenses] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutSuccess, setCheckoutSuccess] = useState<string | null>(null);
   const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
+  const [supabaseUserId, setSupabaseUserId] = useState<string | null>(null);
 
-  const BACKEND_URL =
-    import.meta.env.VITE_BACKEND_URL || "http://localhost:8080";
+  const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
   const STRIPE_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID; // Assuming you have a default price ID for subscription
 
-  const fetchLicenses = useCallback(
-    async (userId: string) => {
-      setLoadingLicenses(true);
-      try {
-        const response = await makeAuthenticatedRequest(
-          `${BACKEND_URL}/api/v1/licenses/${userId}`
-        );
-        if (!response.ok) {
-          throw new Error("Failed to fetch licenses");
-        }
-        const data = await response.json();
-        console.log("Licenses API response:", data);
-        // Handle both direct array response and nested data response
-        const licensesArray = Array.isArray(data) ? data : data.data || [];
-        console.log("Processed licenses array:", licensesArray);
-        setLicenses(licensesArray);
+  const fetchUserInfoData = useCallback(async () => {
+    setLoadingLicenses(true);
+    try {
+      const data = await fetchUserInfo();
+      console.log("User info API response:", data);
 
-        // Handle user metadata extraction from response
-        // Check if response has included data (for broader queries) or if it's a direct array
-        if (data.included) {
-          const keygenUser = data.included.find(
-            (item: unknown) =>
-              (item as { type: string; id: string }).type === "users" &&
-              (item as { type: string; id: string }).id === userId
-          );
-          if (
-            keygenUser &&
-            (
-              keygenUser as {
-                attributes?: { metadata?: { stripe_customer_id?: string } };
-              }
-            ).attributes?.metadata?.stripe_customer_id
-          ) {
-            setStripeCustomerId(
-              (
-                keygenUser as {
-                  attributes: { metadata: { stripe_customer_id: string } };
-                }
-              ).attributes.metadata.stripe_customer_id
-            );
-          }
+      // Extract and set licenses
+      const licensesArray = data.licenses || [];
+      console.log("Processed licenses array:", licensesArray);
+      setLicenses(licensesArray);
+
+      // Extract metadata
+      if (data.user?.attributes?.metadata) {
+        const metadata = data.user.attributes.metadata;
+        if (metadata.stripeCustomerId) {
+          setStripeCustomerId(metadata.stripeCustomerId);
         }
-        // Note: For direct array responses, user metadata would need to be fetched separately
-      } catch (error) {
-        console.error("Error fetching licenses:", error);
-        setLicenses([]); // Ensure licenses is always an array
-      } finally {
-        setLoadingLicenses(false);
+        if (metadata.supabaseUserId) {
+          setSupabaseUserId(metadata.supabaseUserId);
+        }
       }
-    },
-    [makeAuthenticatedRequest, BACKEND_URL]
-  );
+    } catch (error) {
+      console.error("Error fetching user info:", error);
+      setLicenses([]); // Ensure licenses is always an array
+    } finally {
+      setLoadingLicenses(false);
+    }
+  }, [fetchUserInfo]);
 
   useEffect(() => {
     if (user) {
       const keygenUserId = getKeygenUserId();
       if (keygenUserId) {
-        fetchLicenses(keygenUserId);
+        fetchUserInfoData();
       } else {
         console.log("No Keygen user ID found in metadata");
       }
@@ -83,14 +64,14 @@ const Dashboard: React.FC = () => {
     const canceled = urlParams.get("canceled");
 
     if (sessionId) {
-      // Payment was successful, refresh licenses
+      // Payment was successful, refresh user info
       setCheckoutSuccess(
         "Payment successful! Your license is being processed..."
       );
       if (user) {
         const keygenUserId = getKeygenUserId();
         if (keygenUserId) {
-          fetchLicenses(keygenUserId);
+          fetchUserInfoData();
         }
       }
       // Clean up URL
@@ -102,7 +83,7 @@ const Dashboard: React.FC = () => {
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [user, getKeygenUserId, fetchLicenses]);
+  }, [user, getKeygenUserId, fetchUserInfoData]);
 
   const handleSignOut = async () => {
     try {
@@ -281,6 +262,22 @@ const Dashboard: React.FC = () => {
                     {getKeygenUserId() || "Not available"}
                   </dd>
                 </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-sm font-medium text-gray-500">
+                    Supabase User ID
+                  </dt>
+                  <dd className="mt-1 text-sm text-gray-900 break-all">
+                    {supabaseUserId || "Not available"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-sm font-medium text-gray-500">
+                    Stripe Customer ID
+                  </dt>
+                  <dd className="mt-1 text-sm text-gray-900 break-all">
+                    {stripeCustomerId || "Not available"}
+                  </dd>
+                </div>
               </dl>
               {stripeCustomerId && (
                 <div className="mt-6 pt-6 border-t border-gray-200">
@@ -325,23 +322,61 @@ const Dashboard: React.FC = () => {
                             name: string;
                             key: string;
                             status: string;
+                            expiry: string | null;
+                            uses: number;
+                            maxUses: number | null;
+                            floating: boolean;
+                            protected: boolean;
                           };
                         };
                         return (
                           <li
                             key={licenseData.id}
-                            className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center"
+                            className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-start"
                           >
-                            <div className="mb-2 sm:mb-0">
+                            <div className="mb-2 sm:mb-0 flex-1">
                               <p className="text-sm font-medium text-indigo-600">
                                 {licenseData.attributes.name}
                               </p>
-                              <p className="text-xs text-gray-500">
+                              <p className="text-xs text-gray-500 mt-1">
                                 Key: {licenseData.attributes.key}
                               </p>
-                              <p className="text-xs text-gray-500">
-                                Status: {licenseData.attributes.status}
-                              </p>
+                              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-500">
+                                <div>
+                                  <span className="font-medium">Status:</span>{" "}
+                                  {licenseData.attributes.status}
+                                </div>
+                                <div>
+                                  <span className="font-medium">Uses:</span>{" "}
+                                  {licenseData.attributes.uses}
+                                  {licenseData.attributes.maxUses &&
+                                    ` / ${licenseData.attributes.maxUses}`}
+                                </div>
+                                <div>
+                                  <span className="font-medium">Type:</span>{" "}
+                                  {licenseData.attributes.floating
+                                    ? "Floating"
+                                    : "Fixed"}
+                                </div>
+                                <div>
+                                  <span className="font-medium">
+                                    Protected:
+                                  </span>{" "}
+                                  {licenseData.attributes.protected
+                                    ? "Yes"
+                                    : "No"}
+                                </div>
+                                {licenseData.attributes.expiry && (
+                                  <div className="col-span-2">
+                                    <span className="font-medium">
+                                      Expires:
+                                    </span>{" "}
+                                    {new Date(
+                                      licenseData.attributes.expiry
+                                    ).toLocaleDateString()}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <span
                               className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
