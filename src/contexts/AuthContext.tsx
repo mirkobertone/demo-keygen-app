@@ -1,5 +1,10 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { AuthContext, type User, type Session } from "./AuthContextTypes";
+import {
+  AuthContext,
+  type User,
+  type Session,
+  type Profile,
+} from "./AuthContextTypes";
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -8,6 +13,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
   // API base URL
@@ -40,39 +46,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.removeItem("user_data");
   }, []);
 
-  // Helper function to set keygen token in localStorage
-  const setKeygenToken = useCallback((token: string) => {
-    localStorage.setItem("keygen_token", token);
-  }, []);
-
-  // Helper function to get keygen token from localStorage
-  const getKeygenToken = useCallback(() => {
-    return localStorage.getItem("keygen_token");
-  }, []);
-
-  // Helper function to remove keygen token from localStorage
-  const removeKeygenToken = useCallback(() => {
-    localStorage.removeItem("keygen_token");
-  }, []);
-
   // Helper function to remove auth token from localStorage
   const removeAuthToken = useCallback(() => {
     localStorage.removeItem("auth_token");
   }, []);
 
-  // Helper function to set custom token in localStorage
-  const setCustomToken = useCallback((token: string) => {
-    localStorage.setItem("custom_token", token);
+  // Helper function to set profile data in localStorage
+  const setProfileData = useCallback((profileData: Profile) => {
+    localStorage.setItem("profile_data", JSON.stringify(profileData));
   }, []);
 
-  // Helper function to get custom token from localStorage
-  const getCustomToken = useCallback(() => {
-    return localStorage.getItem("custom_token");
+  // Helper function to get profile data from localStorage
+  const getProfileData = useCallback(() => {
+    const profileData = localStorage.getItem("profile_data");
+    return profileData ? JSON.parse(profileData) : null;
   }, []);
 
-  // Helper function to remove custom token from localStorage
-  const removeCustomToken = useCallback(() => {
-    localStorage.removeItem("custom_token");
+  // Helper function to remove profile data from localStorage
+  const removeProfileData = useCallback(() => {
+    localStorage.removeItem("profile_data");
   }, []);
 
   // Helper function to make authenticated requests
@@ -106,10 +98,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const checkAuthStatus = async () => {
       const token = getAuthToken();
       const storedUserData = getUserData();
+      const storedProfileData = getProfileData();
       console.log("checkAuthStatus - token:", token ? "exists" : "null");
       console.log(
         "checkAuthStatus - storedUserData:",
         storedUserData ? "exists" : "null"
+      );
+      console.log(
+        "checkAuthStatus - storedProfileData:",
+        storedProfileData ? "exists" : "null"
       );
 
       if (!token || !storedUserData) {
@@ -119,46 +116,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
 
       try {
-        // Extract keygenUserId from the stored token if not already in user data
-        let keygenUserId = storedUserData.keygenUserId;
-        if (!keygenUserId && token) {
-          const decodedToken = decodeJWT(token);
-          if (decodedToken && decodedToken.keygenUserId) {
-            keygenUserId = decodedToken.keygenUserId;
-            console.log(
-              "Extracted keygenUserId from stored token:",
-              keygenUserId
-            );
-
-            // Update stored user data with keygenUserId
-            const updatedUserData = {
-              ...storedUserData,
-              keygenUserId: keygenUserId,
-            };
-            setUserData(updatedUserData);
-            setUser(updatedUserData);
-          }
-        } else {
-          setUser(storedUserData);
-        }
+        setUser(storedUserData);
+        setProfile(storedProfileData);
 
         // Create session from stored data
         setSession({
-          user: storedUserData,
           access_token: token,
+          token_type: "bearer",
+          expires_in: 3600,
+          expires_at: Date.now() + 3600000, // 1 hour from now
           refresh_token: "",
-          token_type: "Bearer",
+          user: storedUserData,
+          weak_password: null,
         });
 
         console.log("Auth check successful, restored user from localStorage");
       } catch (error) {
         console.error("Auth check failed:", error);
         removeAuthToken();
-        removeKeygenToken();
-        removeCustomToken();
         removeUserData();
+        removeProfileData();
         setUser(null);
         setSession(null);
+        setProfile(null);
       } finally {
         setLoading(false);
       }
@@ -168,11 +148,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [
     getAuthToken,
     getUserData,
-    setUserData,
+    getProfileData,
     removeAuthToken,
-    removeKeygenToken,
-    removeCustomToken,
     removeUserData,
+    removeProfileData,
   ]);
 
   const signUp = async (email: string, password: string) => {
@@ -237,42 +216,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         data.session?.access_token ? "exists" : "null"
       );
       console.log(
-        "Signin successful - keygenToken:",
-        data.keygenToken ? "exists" : "null"
+        "Signin successful - profile:",
+        data.profile ? "exists" : "null"
       );
 
       // Use session.access_token for authenticated requests
       setAuthToken(data.session.access_token);
-      if (data.keygenToken) {
-        setKeygenToken(data.keygenToken);
-      }
 
-      // Store the custom token
-      if (data.token) {
-        setCustomToken(data.token);
-      }
-
-      // Extract keygenUserId from the custom token
-      let keygenUserId = null;
-      if (data.token) {
-        const decodedToken = decodeJWT(data.token);
-        if (decodedToken && decodedToken.keygenUserId) {
-          keygenUserId = decodedToken.keygenUserId;
-          console.log(
-            "Extracted keygenUserId from custom token:",
-            keygenUserId
-          );
-        }
-      }
-
-      // Create user object with keygenUserId
-      const userWithKeygenId = {
-        ...data.user,
-        keygenUserId: keygenUserId,
-      };
-
-      setUser(userWithKeygenId);
-      setUserData(userWithKeygenId);
+      // Store user, session, and profile data
+      setUser(data.user);
+      setUserData(data.user);
+      setProfile(data.profile);
+      setProfileData(data.profile);
       setSession(data.session);
 
       return { error: null };
@@ -291,53 +246,43 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } finally {
       // Always clear local state and tokens
       removeAuthToken();
-      removeKeygenToken();
-      removeCustomToken();
       removeUserData();
+      removeProfileData();
       setUser(null);
       setSession(null);
+      setProfile(null);
     }
   };
 
   const getKeygenUserId = () => {
-    return user?.keygenUserId || user?.user_metadata?.keygen_user_id || null;
+    return profile?.keygen_user_id || null;
   };
 
-  const getKeygenTokenValue = () => {
-    return getKeygenToken();
-  };
-
-  // Call the whoami API to get user metadata and licenses
-  const fetchUserInfo = async () => {
+  // Call the licenses API to get user licenses
+  const fetchLicenses = async () => {
     const token = getAuthToken();
-    const keygenToken = getKeygenToken();
-    const keygenUserId = getKeygenUserId();
 
-    if (!token || !keygenToken || !keygenUserId) {
-      throw new Error("Missing authentication tokens or user ID");
+    if (!token) {
+      throw new Error("Missing authentication token");
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/whoami`, {
-        method: "POST",
+      const response = await fetch(`${API_BASE_URL}/licenses`, {
+        method: "GET",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          keygenToken: keygenToken,
-          userId: keygenUserId,
-        }),
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch user info: ${response.statusText}`);
+        throw new Error(`Failed to fetch licenses: ${response.statusText}`);
       }
 
       const data = await response.json();
-      return data;
+      return data.licenses || [];
     } catch (error) {
-      console.error("Error fetching user info:", error);
+      console.error("Error fetching licenses:", error);
       throw error;
     }
   };
@@ -345,15 +290,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const value = {
     user,
     session,
+    profile,
     loading,
     signUp,
     signIn,
     signOut,
     getKeygenUserId,
-    getKeygenToken: getKeygenTokenValue,
-    getCustomToken,
     makeAuthenticatedRequest,
-    fetchUserInfo,
+    fetchLicenses,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
