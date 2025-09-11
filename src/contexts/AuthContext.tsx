@@ -60,6 +60,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.removeItem("auth_token");
   }, []);
 
+  // Helper function to set custom token in localStorage
+  const setCustomToken = useCallback((token: string) => {
+    localStorage.setItem("custom_token", token);
+  }, []);
+
+  // Helper function to get custom token from localStorage
+  const getCustomToken = useCallback(() => {
+    return localStorage.getItem("custom_token");
+  }, []);
+
+  // Helper function to remove custom token from localStorage
+  const removeCustomToken = useCallback(() => {
+    localStorage.removeItem("custom_token");
+  }, []);
+
   // Helper function to make authenticated requests
   const makeAuthenticatedRequest = useCallback(
     async (url: string, options: RequestInit = {}) => {
@@ -140,6 +155,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.error("Auth check failed:", error);
         removeAuthToken();
         removeKeygenToken();
+        removeCustomToken();
         removeUserData();
         setUser(null);
         setSession(null);
@@ -155,6 +171,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setUserData,
     removeAuthToken,
     removeKeygenToken,
+    removeCustomToken,
     removeUserData,
   ]);
 
@@ -230,6 +247,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setKeygenToken(data.keygenToken);
       }
 
+      // Store the custom token
+      if (data.token) {
+        setCustomToken(data.token);
+      }
+
       // Extract keygenUserId from the custom token
       let keygenUserId = null;
       if (data.token) {
@@ -261,7 +283,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signOut = async () => {
     try {
-      await makeAuthenticatedRequest(`${API_BASE_URL}/auth/signout`, {
+      await makeAuthenticatedRequest(`${API_BASE_URL}/signout`, {
         method: "POST",
       });
     } catch (error) {
@@ -270,6 +292,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Always clear local state and tokens
       removeAuthToken();
       removeKeygenToken();
+      removeCustomToken();
       removeUserData();
       setUser(null);
       setSession(null);
@@ -328,6 +351,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     signOut,
     getKeygenUserId,
     getKeygenToken: getKeygenTokenValue,
+    getCustomToken,
     makeAuthenticatedRequest,
     fetchUserInfo,
   };

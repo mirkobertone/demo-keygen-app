@@ -37,6 +37,7 @@ export interface AuthContextType {
   signOut: () => Promise<void>;
   getKeygenUserId: () => string | null;
   getKeygenToken: () => string | null;
+  getCustomToken: () => string | null;
   makeAuthenticatedRequest: (
     url: string,
     options?: RequestInit
