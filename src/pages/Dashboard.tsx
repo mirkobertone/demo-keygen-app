@@ -14,7 +14,6 @@ const Dashboard: React.FC = () => {
   const [loadingLicenses, setLoadingLicenses] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutSuccess, setCheckoutSuccess] = useState<string | null>(null);
-  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
@@ -27,18 +26,13 @@ const Dashboard: React.FC = () => {
       const licensesArray = await fetchLicenses();
       console.log("Licenses API response:", licensesArray);
       setLicenses(licensesArray);
-
-      // Set Stripe customer ID from profile
-      if (profile?.stripe_customer_id) {
-        setStripeCustomerId(profile.stripe_customer_id);
-      }
     } catch (error) {
       console.error("Error fetching licenses:", error);
       setLicenses([]); // Ensure licenses is always an array
     } finally {
       setLoadingLicenses(false);
     }
-  }, [fetchLicenses, profile]);
+  }, [fetchLicenses]);
 
   useEffect(() => {
     if (user && profile) {
